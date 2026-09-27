@@ -50,6 +50,16 @@ export default function SignupForm() {
           duration: 2000,
           isClosable: true,
         });
+      } else if (result.code && result.code.startsWith("auth/")) {
+        // Genuine Firebase failure (bad config, unauthorized domain, etc.)
+        // — surface it instead of misreporting a user cancel.
+        toast({
+          title: "Google Sign Up failed.",
+          description: result.message || result.code,
+          status: "error",
+          duration: 4000,
+          isClosable: true,
+        });
       } else {
         // User cancelled the sign-up process
         toast({
