@@ -19,6 +19,11 @@ const MODELS = [
   'gemma-4-26b',
 ];
 
+// Gemini streaming TTFT alone measures 13–25s, so the Vercel default
+// function timeout would kill slow responses mid-stream. Allow the full
+// Hobby-plan budget (60s) for this route.
+export const maxDuration = 60;
+
 // In-memory per-user sliding window: 10 AI requests per minute.
 // Protects the Gemini free-tier quota from accidental/abusively rapid use.
 // (Resets on cold start — acceptable for a hobby deployment.)
@@ -275,6 +280,8 @@ export async function POST(request) {
       async start(controller) {
         const reader = geminiResponse.body.getReader();
         const decoder = new TextDecoder();
+        const tStart = Date.now();
+        let tFirstChunk = null;
         let lineBuffer = '';
         try {
           for (;;) {
@@ -298,6 +305,10 @@ export async function POST(request) {
               for (const part of parts || []) {
                 if (part?.text) {
                   fullText += part.text;
+                  if (tFirstChunk === null) {
+                    tFirstChunk = Date.now();
+                    console.log(`HabAIt stream: first chunk after ${tFirstChunk - tStart}ms`);
+                  }
                   controller.enqueue(encoder.encode(part.text));
                 }
               }
@@ -310,9 +321,13 @@ export async function POST(request) {
         }
 
         if (!fullText) {
-          controller.error(new Error('AI returned empty response'));
-          return;
+          // Never kill the client stream: an empty model response (blocked
+          // prompt, model quirk) becomes a graceful chat message instead of
+          // a network-level stream error.
+          fullText = 'I could not generate a reply just now. Please try rephrasing your message.';
+          controller.enqueue(encoder.encode(fullText));
         }
+        console.log(`HabAIt stream: done in ${Date.now() - tStart}ms (${fullText.length} chars)`);
 
         // Persist the complete response before closing the stream
         try {
